@@ -1,0 +1,106 @@
+---
+slug: mdx-blog-post
+title: DOTween的生命周期
+authors: [Mingchong Li]
+tags: [DOTween, Life Cycle]
+---
+
+
+## 一、Tween 的生命周期阶段
+
+1. **创建阶段**
+
+   * 通过 `DOTween.To`、`transform.DOMove` 等 API 创建 Tween 对象。
+   * 默认情况下，Tween 并不会立即执行，需要等到下一帧 DOTween 的更新循环开始。
+
+2. **激活阶段**
+
+   * DOTween 有一个全局的 `UpdateManager`，在每帧的 `Update`/`LateUpdate`/`FixedUpdate` 调用时，遍历活跃的 Tween 列表，计算并应用插值。
+   * 如果你设置了 `.SetUpdate(UpdateType.Fixed)`，它会在 FixedUpdate 时更新。
+
+3. **执行阶段（每帧干什么）**
+   每一帧 DOTween 会：
+
+   * 计算当前时间进度（基于 `Time.deltaTime` 或 `Time.unscaledDeltaTime`）。
+   * 判断是否到达延迟（如果设置了 `SetDelay`）。
+   * 根据插值曲线（`Ease`）计算当前值。
+   * 执行 setter，把数值应用到目标（比如 TMP.Text 的 `text` 或 Transform 的 `position`）。
+   * 检查是否到达完成条件（时长结束或 `Goto`）。
+
+4. **完成或中止阶段**
+
+   * 正常播放到终点：进入完成状态，触发 `OnComplete` 回调。
+   * 被手动停止（`Kill`）：Tween 销毁，从管理器中移除。
+   * 被跳转（`Complete`/`Goto`）：立刻把数值跳到目标，触发完成逻辑。
+
+---
+
+## 二、控制方法详解
+
+### 1. `SetLink(GameObject go, LinkBehaviour behaviour = KillOnDestroy)`
+
+* 把 Tween 绑定到某个 `GameObject`。
+* 当 `GameObject` 被销毁时，Tween 会自动处理：
+
+  * **默认 `KillOnDestroy`**：目标对象销毁时，Tween 也会被 `Kill` 掉，避免报错。
+  * **`CompleteOnDestroy`**：销毁时，Tween 先跑到完成状态，再 Kill。
+  * **`PauseOnDisable`**：对象被禁用时暂停 Tween，重新启用时恢复。
+
+> 用在 UI 或对象频繁销毁的场景，避免 “MissingReferenceException”。
+
+---
+
+### 2. `Kill(bool complete = false)`
+
+* 立即销毁 Tween，从 DOTween 系统中移除。
+* 参数 `complete` 决定是否在 Kill 前先执行完成状态：
+
+  * `Kill(true)` = 先 `Complete` 再销毁。
+  * `Kill(false)` = 直接销毁，不触发完成。
+
+---
+
+### 3. `Complete(bool withCallbacks = true)`
+
+* 强制把 Tween 拉到结尾状态，立刻应用目标值。
+* 如果 `withCallbacks = true`，触发 `OnComplete`、`OnStepComplete` 等回调。
+* 不会销毁 Tween，对象还存在，可以重新 `Restart`。
+
+---
+
+### 4. 其他相关方法
+
+* `Pause()` / `Play()`：暂停和恢复。
+* `Restart(bool includeDelay = true)`：重新从头播放。
+* `Rewind()`：重置到起点，不触发完成回调。
+* `Goto(float time, bool andPlay = false)`：跳到指定时间点。
+
+---
+
+## 三、常见生命周期流转图（简化）
+
+```
+Create -> (延迟?) -> Active -> 每帧更新 -> 
+    ├─> Complete (自然到时长) 
+    ├─> Kill (手动销毁)
+    └─> Complete() (强制完成，可再Restart)
+```
+
+---
+
+## 四、实践注意点
+
+1. **避免内存泄漏**
+
+   * 没有 `SetLink` 的 Tween，如果目标被销毁，仍然会在后台更新，导致报错或 GC 压力。
+   * UI 动画必须 `SetLink(gameObject)`。
+
+2. **Kill 和 Complete 区别**
+
+   * `Kill`：直接销毁，通常用于彻底清理（比如界面关闭时）。
+   * `Complete`：用于快速完成动画（比如跳过过场）。
+
+3. **每帧性能**
+
+   * DOTween 会维护一个活跃 Tween 列表。Tween 数量过多（成百上千）会拖慢 Update。
+   * 对高频 UI 动画，推荐对象池化、复用。
