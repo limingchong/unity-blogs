@@ -1,106 +1,231 @@
 ---
 slug: DOTween-life_cycle
 title: DOTween的生命周期
-authors: [Mingchong Li]
-tags: [DOTween, Life Cycle]
+authors: [mingchong]
+tags: [dotween, life_cycle]
 ---
 
 
-## 一、Tween 的生命周期阶段
+# DOTween 生命周期：从创建到销毁
 
-1. **创建阶段**
+:::info 阅读路线
+1) 先看状态图 → 2) 再看每帧流程 → 3) 最后按场景套用代码片段。
+:::
 
-   * 通过 `DOTween.To`、`transform.DOMove` 等 API 创建 Tween 对象。
-   * 默认情况下，Tween 并不会立即执行，需要等到下一帧 DOTween 的更新循环开始。
+## 一、生命周期状态图（State Diagram）
 
-2. **激活阶段**
+```mermaid
+stateDiagram-v2
+    [*] --> Created
 
-   * DOTween 有一个全局的 `UpdateManager`，在每帧的 `Update`/`LateUpdate`/`FixedUpdate` 调用时，遍历活跃的 Tween 列表，计算并应用插值。
-   * 如果你设置了 `.SetUpdate(UpdateType.Fixed)`，它会在 FixedUpdate 时更新。
+    Created: 通过 DOTween.To / DOMove / DOScale 等创建
+    Created --> PendingActivation: 等待下一帧被加入活跃列表（含 SetDelay 情况）
+    PendingActivation --> Active: 到达起始播放点（或延迟结束）
+    Active --> Paused: 调用 Pause() 或目标被禁用且 LinkBehaviour=PauseOnDisable
+    Paused --> Active: Play() / 目标重新启用
+    Active --> Completed: 自然到达时长终点 或 调用 Complete()/Goto(时长终点)
+    Active --> Killed: 调用 Kill() 或 目标被销毁且 LinkBehaviour=KillOnDestroy
+    Active --> Completed: 目标销毁且 LinkBehaviour=CompleteOnDestroy
+    Completed --> [*]
+    Killed --> [*]
+````
 
-3. **执行阶段（每帧干什么）**
-   每一帧 DOTween 会：
+**术语速览**
 
-   * 计算当前时间进度（基于 `Time.deltaTime` 或 `Time.unscaledDeltaTime`）。
-   * 判断是否到达延迟（如果设置了 `SetDelay`）。
-   * 根据插值曲线（`Ease`）计算当前值。
-   * 执行 setter，把数值应用到目标（比如 TMP.Text 的 `text` 或 Transform 的 `position`）。
-   * 检查是否到达完成条件（时长结束或 `Goto`）。
+* **Created**：本帧已分配 Tween 对象，但不一定立刻跑（通常下一帧激活）。
+* **PendingActivation**：含 `SetDelay` 的等待期，或首次入活跃表前的过渡。
+* **Active**：进入 DOTween 的更新循环，每帧计算插值并写回目标属性。
+* **Paused**：暂停状态，不更新。
+* **Completed**：正常或强制完成（可能触发回调）。
+* **Killed**：从管理器移除并释放（不再可用）。
 
-4. **完成或中止阶段**
+## 二、每帧更新流程（Update Pipeline）
 
-   * 正常播放到终点：进入完成状态，触发 `OnComplete` 回调。
-   * 被手动停止（`Kill`）：Tween 销毁，从管理器中移除。
-   * 被跳转（`Complete`/`Goto`）：立刻把数值跳到目标，触发完成逻辑。
-
----
-
-## 二、控制方法详解
-
-### 1. `SetLink(GameObject go, LinkBehaviour behaviour = KillOnDestroy)`
-
-* 把 Tween 绑定到某个 `GameObject`。
-* 当 `GameObject` 被销毁时，Tween 会自动处理：
-
-  * **默认 `KillOnDestroy`**：目标对象销毁时，Tween 也会被 `Kill` 掉，避免报错。
-  * **`CompleteOnDestroy`**：销毁时，Tween 先跑到完成状态，再 Kill。
-  * **`PauseOnDisable`**：对象被禁用时暂停 Tween，重新启用时恢复。
-
-> 用在 UI 或对象频繁销毁的场景，避免 “MissingReferenceException”。
-
----
-
-### 2. `Kill(bool complete = false)`
-
-* 立即销毁 Tween，从 DOTween 系统中移除。
-* 参数 `complete` 决定是否在 Kill 前先执行完成状态：
-
-  * `Kill(true)` = 先 `Complete` 再销毁。
-  * `Kill(false)` = 直接销毁，不触发完成。
-
----
-
-### 3. `Complete(bool withCallbacks = true)`
-
-* 强制把 Tween 拉到结尾状态，立刻应用目标值。
-* 如果 `withCallbacks = true`，触发 `OnComplete`、`OnStepComplete` 等回调。
-* 不会销毁 Tween，对象还存在，可以重新 `Restart`。
-
----
-
-### 4. 其他相关方法
-
-* `Pause()` / `Play()`：暂停和恢复。
-* `Restart(bool includeDelay = true)`：重新从头播放。
-* `Rewind()`：重置到起点，不触发完成回调。
-* `Goto(float time, bool andPlay = false)`：跳到指定时间点。
-
----
-
-## 三、常见生命周期流转图（简化）
-
-```
-Create -> (延迟?) -> Active -> 每帧更新 -> 
-    ├─> Complete (自然到时长) 
-    ├─> Kill (手动销毁)
-    └─> Complete() (强制完成，可再Restart)
+```mermaid
+flowchart TD
+    A[每帧: Update/LateUpdate/FixedUpdate] --> B{遍历活跃 Tweens}
+    B -->|对每个 Tween| C{是否到达 Delay?}
+    C -->|否| D[累积 deltaTime / unscaledDeltaTime]
+    C -->|是| E[计算进度 t = elapsed/duration]
+    D --> E
+    E --> F[Ease 曲线映射: t' = Ease(t)]
+    F --> G[评估值: val = Lerp(from,to,t')]
+    G --> H[调用 setter 写回目标属性]
+    H --> I{是否到达终点/Loop?}
+    I -->|终点| J[触发 OnComplete/OnStepComplete]
+    I -->|Loop/YoYo| K[重置或反向，继续 Active]
+    J --> L[若不循环 -> Completed]
+    L --> M[若 AutoKill=true -> Killed]
 ```
 
+> **要点**
+>
+> * 选择的 Update 通道决定 `deltaTime` 来源：`Update` / `LateUpdate` / `FixedUpdate` / `Manual`.
+> * `.SetUpdate(isIndependentUpdate: true)` 使用 **unscaled** 时间；或 `SetUpdate(UpdateType.Normal, true)`。
+> * 循环（`SetLoops`）会在 `I` 处分支；`AutoKill(false)` 则在完成后**不**自动销毁。
+
+## 三、核心控制 API（精要）
+
+### `SetLink(go, behaviour = KillOnDestroy)`
+
+* 在 **目标 GameObject** 生命周期变化时自动处理 Tween：
+
+  * `KillOnDestroy`（默认）：目标销毁 → `Kill()`
+  * `CompleteOnDestroy`：目标销毁 → 先 `Complete()` 再 `Kill()`
+  * `PauseOnDisable`：目标禁用 → `Pause()`；重新启用 → `Play()`
+* **推荐**：所有 UI/Scene 物体动画都 `.SetLink(gameObject)`，避免目标销毁后仍写属性导致报错。
+
+### `Kill(bool complete = false)`
+
+* 立即从管理器移除并释放资源。
+* `Kill(true)`：先 `Complete()` 再 Kill（会触发完成回调）。
+* `Kill(false)`：直接 Kill（不触发完成回调、不跳至终值）。
+
+### `Complete(bool withCallbacks = true)`
+
+* 立刻把 Tween **推进到终点**并**写入终止值**。
+* `withCallbacks = true` → 触发 `OnComplete/OnStepComplete`。
+* **不会销毁** Tween（除非 AutoKill=true）。可 `Restart()` 复播。
+
+### 其它常用
+
+* `Pause()/Play()/TogglePause()`：播放控制。
+* `Restart(includeDelay = true)`：从头再来（可选择是否重算延迟）。
+* `Rewind(playBackwards = false)`：回到起点（不触发完成回调）。
+* `Goto(position, andPlay = false)`：跳到任意时间点（0\~duration）。
+
+## 四、典型场景与写法
+
+### 1) UI 打开/关闭动画（避免泄漏 + 快速跳过）
+
+```csharp
+Sequence seq = DOTween.Sequence().SetAutoKill(false); // 关闭后可复用
+seq.Append(panel.DOFade(1f, 0.25f))
+   .Join(content.DOScale(1f, 0.25f).From(0.9f).SetEase(Ease.OutBack))
+   .SetLink(gameObject); // 目标面板
+
+// 关闭：如果要“直接出结果然后收尾”
+public void CloseInstant()
+{
+    if (seq.IsActive())
+    {
+        seq.Complete(); // 跳到终点，触发回调（比如设置 interactable 等）
+        seq.Kill();     // 彻底清理（或保留复用就不 Kill）
+    }
+}
+```
+
+### 2) 目标销毁时的收尾策略
+
+```csharp
+// 目标消失前希望动画体面收官 → CompleteOnDestroy
+transform.DOMove(target, 0.4f)
+    .SetLink(gameObject, LinkBehaviour.CompleteOnDestroy);
+```
+
+### 3) 禁用时暂停，启用恢复（例如列表项复用）
+
+```csharp
+itemRect.DOScale(1f, 0.2f)
+    .From(0.85f)
+    .SetLink(gameObject, LinkBehaviour.PauseOnDisable);
+```
+
+### 4) 三段并行动画（Slider 值 / 百分比文本 / 计数文本）
+
+```csharp
+var seq = DOTween.Sequence();
+seq.Join(slider.DOValue(targetPct, dur));
+
+seq.Join(DOTween.To(() => 0f, x => percentText.text = (x*100f).ToString("F2") + "%", targetPct, dur)
+               .SetEase(Ease.OutCubic));
+
+seq.Join(DOTween.To(() => 0, x => countText.text = GameUtilities.FormatNumber(x), targetCount, dur)
+               .SetEase(Ease.OutCubic))
+   .SetLink(gameObject);
+```
+
+## 五、行为差异对照（常见易混）
+
+| 操作            | 写入终值          | 触发 OnComplete |                  能否复播 |            是否从管理器移除 |
+| ------------- | ------------- | ------------: | --------------------: | ------------------: |
+| 自然结束          | ✅             |             ✅ | 取决于 `AutoKill(false)` | `AutoKill=true` 时移除 |
+| `Complete()`  | ✅             |         ✅（默认） |                     ✅ |        取决于 AutoKill |
+| `Rewind()`    | ❌（回到起点）       |             ❌ |                     ✅ |                   ❌ |
+| `Kill(false)` | ❌             |             ❌ |               ❌（对象销毁） |                   ✅ |
+| `Kill(true)`  | ✅（先 Complete） |             ✅ |                     ❌ |                   ✅ |
+
+> **经验法则**
+>
+> * **跳过动画但希望状态正确**：`Complete()`
+> * **关闭界面或彻底清理**：`Kill()`（必要时 `Kill(true)`）
+> * **回到初始视觉但不触发完成逻辑**：`Rewind()`
+
+## 六、每帧成本与稳定性建议
+
+* **将 `.SetLink` 视为默认必做**：UI 或临时对象动画，统一绑定，杜绝目标销毁后继续写属性的隐患。
+* **控制活跃 Tween 数量**：成百上千活跃 Tweens 会拖慢遍历与 setter 调用；界面关闭时清理（`Kill`/`Rewind`）。
+* **合理选择 Update 通道**：
+
+  * 物理：`SetUpdate(UpdateType.Fixed)`
+  * UI 时间不受暂停：`SetUpdate(UpdateType.Normal, true)`
+  * 需要逐帧外部驱动：`UpdateType.Manual` + `DOTween.ManualUpdate(dt, unscaledDt)`
+* **避免多重写属性**：同一目标/同一属性并发 Tweens 易抖动/相互覆盖，创建新 Tween 前建议 `Kill` 旧的（可用统一 `id` 管理）。
+
+## 七、实用小工具（可直接粘贴用）
+
+```csharp
+public static class TweenUtil
+{
+    // 按目标与属性“单例化”Tween：重复调用会先杀掉旧 Tween
+    public static T SafePlay<T>(this T t, object id, GameObject linkGO = null) where T : Tween
+    {
+        if (DOTween.IsTweening(id)) DOTween.Kill(id);
+        t.SetId(id);
+        if (linkGO) t.SetLink(linkGO);
+        t.Play();
+        return t;
+    }
+
+    // 快速“完成或清理”
+    public static void CompleteAndMaybeKill(this Tween t, bool kill = false)
+    {
+        if (t == null || !t.IsActive()) return;
+        t.Complete();
+        if (kill) t.Kill();
+    }
+}
+```
+
+## 八、常见问答（FAQ）
+
+**Q1：为什么 `OnComplete` 偶尔“没触发”？**
+
+* Tween 被 `Kill(false)` 了（直接移除）、或对象被销毁且 `LinkBehaviour=KillOnDestroy`。
+* 逻辑提前 `Goto()` 到中途并 `Kill(false)`。
+* `AutoKill(false)` + `Complete()` 后又被 `Rewind()` 覆盖了状态，误以为没完成。
+  → 用日志或 `OnKill`/`OnComplete` 双回调辅助排查；必要时 `Kill(true)`。
+
+**Q2：有没有 `OnKill` 也不触发的情况？**
+
+* 调用前 Tween 已不再 `IsActive()`（被 GC 或未创建成功）。
+* 使用 ID 批量 `DOTween.Kill(id)` 时，注意目标确实存在且匹配该 ID。
+
+**Q3：如何检测“是否有某类 Tween 在播”？**
+
+```csharp
+bool any = DOTween.IsTweening(idOrTarget, allowRecyclable: true);
+```
+
+**Q4：多个 Tween 共用一个 `SetId` 可以吗？**
+
+* 可以，常用于“同一目标同一语义”的互斥管理（创建前先 `DOTween.Kill(id)`）。
+
 ---
 
-## 四、实践注意点
-
-1. **避免内存泄漏**
-
-   * 没有 `SetLink` 的 Tween，如果目标被销毁，仍然会在后台更新，导致报错或 GC 压力。
-   * UI 动画必须 `SetLink(gameObject)`。
-
-2. **Kill 和 Complete 区别**
-
-   * `Kill`：直接销毁，通常用于彻底清理（比如界面关闭时）。
-   * `Complete`：用于快速完成动画（比如跳过过场）。
-
-3. **每帧性能**
-
-   * DOTween 会维护一个活跃 Tween 列表。Tween 数量过多（成百上千）会拖慢 Update。
-   * 对高频 UI 动画，推荐对象池化、复用。
+:::tip 集成建议（团队规范）
+- 所有 UI 动画必须 `.SetLink(gameObject)`；  
+- 同一属性二次动画，先 `Kill(id)` 再创建；  
+- 过场“跳过”统一走 `Complete()`；  
+- 界面 OnDisable/OnDestroy 中做兜底清理（Kill/CompleteAndMaybeKill）。
+:::

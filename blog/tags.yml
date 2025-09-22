@@ -17,3 +17,13 @@ hola:
   label: Hola
   permalink: /hola
   description: Hola tag description
+
+dotween:
+  label: DOTween
+  permalink: /dotween
+  description: DOTween tag description
+
+life_cycle:
+  label: Life Cycle
+  permalink: /life_cycle
+  description: Life Cycle tag description

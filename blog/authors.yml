@@ -23,3 +23,12 @@ slorber:
     linkedin: sebastienlorber
     github: slorber
     newsletter: https://thisweekinreact.com
+
+mingchong:
+  name: Mingchong Li
+  title: Unity Developer
+  url: https://www.linkedin.com/in/mingchong-li
+  image_url: https://media.licdn.com/dms/image/v2/D5635AQFw3BibUxtwrQ/profile-framedphoto-shrink_400_400/B56ZbxNWU2HgAc-/0/1747803531430?e=1759154400&v=beta&t=Cs04MyllaRW-_zNsHzPkm0-F5WKFES1PeuccSEH0hko
+  socials:
+    linkedin: mingchong-li
+    github: limingchong
