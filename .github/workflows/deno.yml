@@ -1,50 +1,34 @@
-name: Deploy Docusaurus
+name: Argos CI Screenshots
 
 on:
   push:
-    branches: [ master ]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 jobs:
-  build:
+  take-screenshots:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Check out repository code
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v3
         with:
-          node-version: 18
-          cache: npm
+          node-version: current
 
-      - name: Install deps
-        run: npm ci
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
 
-      - name: Build site
-        run: npm run build
+      - name: Install Playwright browsers
+        run: yarn playwright install --with-deps chromium
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: build
+      - name: Build the website
+        run: yarn docusaurus build
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+      - name: Take screenshots with Playwright
+        run: yarn playwright test
+
+      - name: Upload screenshots to Argos
+        run: yarn argos upload ./screenshots
