@@ -6,7 +6,7 @@ tags: [function, signature]
 ---
 
 
-# delegate
+## delegate
 
 **定义**  
 自定义委托类型（函数签名的强类型别名）。IL 性能与 `Action/Func` 等价，但**可读性与可演进性**更好。
@@ -40,7 +40,7 @@ public sealed class DamageEventArgs : EventArgs
     public DamageEventArgs(int amount) => Amount = amount;
 }
 
-# action
+## action
 
 **定义**
 `Action<T1,...,T16>`：无返回值的通用委托。
@@ -82,7 +82,7 @@ void OnDisable()
 
 ---
 
-# UnityAction
+## UnityAction
 
 **定义**
 `UnityEngine.Events.UnityAction` / `UnityAction<T...>`：与 `Action` 类似，主要配合 `UnityEvent` 使用。
@@ -114,7 +114,7 @@ void Teardown(UnityEvent evt)
 
 ---
 
-# Func
+## Func
 
 **定义**
 `Func<T1,...,TResult>`：有返回值的通用委托。
@@ -143,7 +143,7 @@ public class Spawner
 
 ---
 
-# Predicate
+## Predicate
 
 **定义**
 `Predicate<T>` 等价于 `Func<T, bool>`，表达**条件/过滤器**语义更强。
@@ -163,7 +163,7 @@ var mergeables = items.FindAll(canMerge);
 
 ---
 
-# event
+## event
 
 **定义**
 `event` 关键字为**发布-订阅**提供封装：外部只能 `+=` / `-=`，**不能调用**或置空。
@@ -206,7 +206,7 @@ public sealed class ValueChangedEventArgs<T> : EventArgs
 
 ---
 
-# UnityEvent
+## UnityEvent
 
 **定义**
 `UnityEngine.Events.UnityEvent`（含泛型版）：**可序列化、可在 Inspector 配置回调**（持久监听），也支持运行时 `AddListener`。
