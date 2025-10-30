@@ -1,0 +1,273 @@
+````mdx
+---
+slug: function_signature
+title: 方法签名
+authors: [mingchong]
+tags: [function, signature]
+---
+
+面向 Unity/C# 的委托与事件速查。每节都包含**定义**、**何时使用**、**注意事项**与**示例**，偏重性能与可维护性。
+
+---
+
+# delegate
+
+**定义**  
+自定义委托类型（函数签名的强类型别名）。IL 性能与 `Action/Func` 等价，但**可读性与可演进性**更好。
+
+**何时使用**
+- 对外公共 API，需要**语义化名字**（更易读/生成文档）。
+- 需要 `ref/out/in/params` 等复杂签名（`Action/Func` 无法表达）。
+- 以后可能调整参数但希望保留明确含义。
+
+**注意事项**
+- 建议与 `event` 搭配；避免对外暴露 `public delegate` 字段实例。
+- 命名风格：`SomethingHappenedHandler` 或 `TryDoXxxHandler`。
+
+```csharp
+public delegate void DamageTakenHandler(object sender, DamageEventArgs args);
+
+public class Health
+{
+    public event DamageTakenHandler DamageTaken;
+
+    public void Take(int amount)
+    {
+        // ...
+        DamageTaken?.Invoke(this, new DamageEventArgs(amount));
+    }
+}
+
+public sealed class DamageEventArgs : EventArgs
+{
+    public int Amount { get; }
+    public DamageEventArgs(int amount) => Amount = amount;
+}
+````
+
+---
+
+# action
+
+**定义**
+`Action<T1,...,T16>`：无返回值的通用委托。
+
+**何时使用**
+
+* **内部回调/高频事件**：轻量、直接。
+* 简单的“通知型”回调（参数返回值简单）。
+
+**注意事项（Unity 性能）**
+
+* 避免在 `Update` 等热路径**每帧新建 lambda**（会分配闭包/委托）。
+* 需要解绑时**缓存同一个委托实例**或使用**有名方法**。
+
+```csharp
+public class TickEmitter : MonoBehaviour
+{
+    public event Action<float> OnTick;
+
+    void Update() => OnTick?.Invoke(Time.deltaTime);
+}
+
+// 订阅/解绑（缓存实例）
+private Action<float> _tickHandler;
+
+void OnEnable()
+{
+    var emitter = FindAnyObjectByType<TickEmitter>();
+    _tickHandler = dt => Debug.Log($"tick {dt}");
+    emitter.OnTick += _tickHandler;
+}
+
+void OnDisable()
+{
+    var emitter = FindAnyObjectByType<TickEmitter>();
+    if (_tickHandler != null) emitter.OnTick -= _tickHandler;
+}
+```
+
+---
+
+# UnityAction
+
+**定义**
+`UnityEngine.Events.UnityAction` / `UnityAction<T...>`：与 `Action` 类似，主要配合 `UnityEvent` 使用。
+
+**何时使用**
+
+* 需要与 `UnityEvent`（可序列化）对接，或监听 Unity 内置 UI 事件。
+
+**注意事项**
+
+* 如果**不需要** Inspector 可配置，优先用标准库 `Action`，依赖更少。
+
+```csharp
+using UnityEngine.Events;
+
+UnityAction onDone;
+
+void Setup(UnityEvent evt)
+{
+    onDone = () => Debug.Log("done");
+    evt.AddListener(onDone);
+}
+
+void Teardown(UnityEvent evt)
+{
+    if (onDone != null) evt.RemoveListener(onDone);
+}
+```
+
+---
+
+# Func
+
+**定义**
+`Func<T1,...,TResult>`：有返回值的通用委托。
+
+**何时使用**
+
+* 提供**查询/工厂**回调（如获取位置、生成对象、计算值）。
+* 与 LINQ、策略模式等搭配。
+
+**注意事项**
+
+* 同样注意闭包分配；纯方法组无捕获时更省内存。
+
+```csharp
+public class Spawner
+{
+    public Func<Vector3> GetSpawnPoint;
+
+    public GameObject Spawn(GameObject prefab)
+    {
+        var pos = GetSpawnPoint != null ? GetSpawnPoint() : Vector3.zero;
+        return Object.Instantiate(prefab, pos, Quaternion.identity);
+    }
+}
+```
+
+---
+
+# Predicate
+
+**定义**
+`Predicate<T>` 等价于 `Func<T, bool>`，表达**条件/过滤器**语义更强。
+
+**何时使用**
+
+* 需要“可读性明确”的布尔判断回调（筛选物品、过滤目标）。
+
+**注意事项**
+
+* 与 `List<T>.Find/Exists/RemoveAll` 等 API 自然融合。
+
+```csharp
+Predicate<Item> canMerge = it => it.Rarity >= Rarity.Epic && it.Count >= 2;
+var mergeables = items.FindAll(canMerge);
+```
+
+---
+
+# event
+
+**定义**
+`event` 关键字为**发布-订阅**提供封装：外部只能 `+=` / `-=`，**不能调用**或置空。
+
+**何时使用**
+
+* 对外暴露的通知机制（解耦、多播）。
+
+**注意事项**
+
+* 触发前拷贝一份以避免竞态；静态事件注意**内存泄漏**（及时 `-=`）。
+* 不要对外暴露 `public Action OnChanged;`（外部可置空/可直接调用，破坏封装）。
+
+```csharp
+public class Inventory
+{
+    public event EventHandler<ValueChangedEventArgs<int>> CountChanged;
+
+    int _count;
+    public int Count
+    {
+        get => _count;
+        set
+        {
+            if (_count == value) return;
+            var old = _count; _count = value;
+            var handler = CountChanged;           // 拷贝一份
+            handler?.Invoke(this, new ValueChangedEventArgs<int>(old, _count));
+        }
+    }
+}
+
+public sealed class ValueChangedEventArgs<T> : EventArgs
+{
+    public T OldValue { get; }
+    public T NewValue { get; }
+    public ValueChangedEventArgs(T old, T @new) { OldValue = old; NewValue = @new; }
+}
+```
+
+---
+
+# UnityEvent
+
+**定义**
+`UnityEngine.Events.UnityEvent`（含泛型版）：**可序列化、可在 Inspector 配置回调**（持久监听），也支持运行时 `AddListener`。
+
+**何时使用**
+
+* 需要**策划/美术**在 Inspector 里拖拽绑定。
+* 低频触发（开关页、按钮点击、剧情节点）。
+
+**注意事项（性能与限制）**
+
+* 调用链包含序列化/反射，**不适合高频**（如 Update/AI Tick）。
+* 最多 4 个参数；参数必须可序列化/可映射。
+* 运行时监听同样要**缓存实例以便 RemoveListener**。
+
+```csharp
+public class Panel : MonoBehaviour
+{
+    [SerializeField] private UnityEvent onOpened;
+    [SerializeField] private UnityEvent<int> onScoreAdded;
+
+    public void Open()
+    {
+        gameObject.SetActive(true);
+        onOpened?.Invoke();       // 低频可接受
+    }
+
+    public void AddScore(int v)
+    {
+        onScoreAdded?.Invoke(v);
+    }
+}
+
+// 代码侧监听/解绑
+UnityAction<int> _scoreHandler;
+
+void OnEnable()
+{
+    _scoreHandler = v => Debug.Log($"score +{v}");
+    panel.onScoreAdded.AddListener(_scoreHandler);
+}
+
+void OnDisable()
+{
+    if (_scoreHandler != null) panel.onScoreAdded.RemoveListener(_scoreHandler);
+}
+```
+
+---
+
+## 速查：怎么选？
+
+* **需要 Inspector 配置** → `UnityEvent/UnityAction`（低频）。
+* **内部轻量回调** → `Action/Func/Predicate`。
+* **对外稳定 API** → `event + 自定义 delegate`（或 `EventHandler<TEventArgs>`）。
+* **需要 `ref/out`** → 自定义 `delegate`。
+* **热路径** → 避免临时 lambda；**缓存委托**或**用有名方法**。
